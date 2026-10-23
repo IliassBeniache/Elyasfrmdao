@@ -388,7 +388,10 @@ document.addEventListener('input',ev=>{
 });
 
 render();
-if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{})}
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+  navigator.serviceWorker.ready.then(()=>caches.match('./index.html')).then(r=>{$('#st').textContent=r?'✓ Offline ready':'Not offline yet'}).catch(()=>{$('#st').textContent='Not offline yet'});
+}else{$('#st').textContent='Offline not supported'}
 </script>
 </body>
 </html>
