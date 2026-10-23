@@ -23,18 +23,23 @@ h1{font-size:22px;margin:8px 0 2px}
 .last{color:var(--mut);font-size:13px;margin-bottom:8px}
 .set{display:grid;grid-template-columns:28px 1fr 1fr 34px;gap:8px;align-items:center;margin-bottom:6px}
 .set span{color:var(--mut);text-align:center}
+.set span.up{color:var(--ac);font-weight:700}
 input{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:10px;width:100%;box-sizing:border-box;text-align:center}
 input.name{text-align:left}
 button{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--bd);color:var(--tx);cursor:pointer}
 button.pri{background:var(--ac);color:var(--acx);font-weight:600}
 button.x{background:none;color:var(--dng);padding:6px 8px}
-.row{display:flex;gap:8px}
+button.u{padding:4px 10px;font-weight:600;margin-right:6px}
+button.wide{width:100%;margin-top:6px}
+.row{display:flex;gap:8px;margin-bottom:6px}
 .row input{flex:1}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button.big{display:flex;flex-direction:column;gap:6px;padding:24px 10px;background:var(--card);border:1px solid var(--bd);border-radius:14px;font-size:19px;text-align:center}
 .tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom,0px)}
 .tabs button{flex:1;border-radius:0;background:none;padding:14px}
 .tabs button.on{color:var(--ac);font-weight:700}
-.hist{display:flex;justify-content:space-between;align-items:center;cursor:pointer}
 .mut{color:var(--mut);font-size:13px}
+.hh{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
 #st{position:fixed;top:calc(env(safe-area-inset-top,0px) + 6px);right:12px;font-size:12px;color:var(--mut)}
 </style>
 </head>
@@ -44,112 +49,159 @@ button.x{background:none;color:var(--dng);padding:6px 8px}
 <nav class="tabs"><button id="t1">Workout</button><button id="t2">History</button></nav>
 <script>
 const $=s=>document.querySelector(s);
-const LS='gymlog.v1';
+const KEY='gymlog.v2';
+const SESSIONS=['Upper 1','Upper 2','Lower 1','Lower 2'];
+const UNITS=['kg','lb','p'];
+const SEED={'Upper 1':[
+  ['Chest press','kg',[[30,5],[25,7]]],
+  ['Lat pulldown','p',[[8,6],[7,7]]],
+  ['Upper back row','lb',[[87.5,7],[75,8]]],
+  ['DB seated curl','kg',[[10,6],[7.5,8]]],
+  ['Triceps pushdown','kg',[[10,6],[7.5,8]]]
+]};
 const pad=n=>String(n).padStart(2,'0');
 const todayStr=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())};
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let workouts={},db=null,uid=null,view='work',cur=todayStr();
-const timers={};
+const clone=o=>JSON.parse(JSON.stringify(o));
+const mk=(n,u,s)=>({name:n,unit:u,sets:s.map(([w,r])=>({w,r}))});
+let S=load(),view='home';
 
-function loadLocal(){try{return JSON.parse(localStorage.getItem(LS))||{}}catch(e){return {}}}
-function saveLocal(){try{localStorage.setItem(LS,JSON.stringify(workouts))}catch(e){}}
+function load(){try{const o=JSON.parse(localStorage.getItem(KEY));if(o&&Array.isArray(o.log))return o}catch(e){}return{log:[],draft:null}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}setSt('Saved')}
 function setSt(t){$('#st').textContent=t}
-function wk(d){return workouts[d]||(workouts[d]={date:d,exercises:[]})}
 
-function persist(d){saveLocal();setSt('Saved')}
-
-function lastFor(name,before){
-  const dates=Object.keys(workouts).filter(d=>d<before).sort().reverse();
-  for(const d of dates){
-    const e=workouts[d].exercises.find(x=>x.name.toLowerCase()===name.toLowerCase());
-    if(e&&e.sets.length) return e.sets;
-  }
-  return null;
+const lastOf=s=>{for(let i=S.log.length-1;i>=0;i--)if(S.log[i].session===s)return S.log[i];return null};
+const plan=s=>{const l=lastOf(s);return l?l.exercises:(SEED[s]||[]).map(([n,u,x])=>mk(n,u,x))};
+const fmt=e=>e.sets.map(s=>(s.w===''?'?':s.w)+e.unit+'×'+(s.r===''?'?':s.r)).join(', ');
+const refEx=(session,name)=>{const l=lastOf(session);return l&&l.exercises.find(x=>x.name.toLowerCase()===name.toLowerCase())};
+function isUp(i,j){
+  const d=S.draft,e=d.exercises[i],s=e.sets[j],r=refEx(d.session,e.name),p=r&&r.sets[j];
+  return !!(p&&s.w!==''&&s.r!==''&&(s.w>p.w||(s.w===p.w&&s.r>p.r)));
 }
-const fmt=s=>s.map(x=>(x.w||0)+'×'+(x.r||0)).join(', ');
-const allNames=()=>[...new Set(Object.values(workouts).flatMap(w=>w.exercises.map(e=>e.name)))].sort();
+function allNames(){
+  const n=new Set();
+  Object.values(SEED).forEach(x=>x.forEach(e=>n.add(e[0])));
+  S.log.forEach(l=>l.exercises.forEach(e=>n.add(e.name)));
+  return [...n].sort();
+}
+function unitFor(name){
+  for(let i=S.log.length-1;i>=0;i--){const e=S.log[i].exercises.find(x=>x.name.toLowerCase()===name.toLowerCase());if(e)return e.unit}
+  for(const k in SEED){const e=SEED[k].find(x=>x[0].toLowerCase()===name.toLowerCase());if(e)return e[1]}
+  return 'kg';
+}
 
-function renderWork(){
-  const w=wk(cur);
-  let h='<h1>'+(cur===todayStr()?'Today’s workout':cur)+'</h1><div class="sub">Weights in kg</div>';
-  w.exercises.forEach((e,i)=>{
-    const l=lastFor(e.name,cur);
-    h+='<div class="card"><div class="ex-h"><b>'+esc(e.name)+'</b><button class="x" data-del="'+i+'">Remove</button></div>';
-    h+='<div class="last">'+(l?'Last time: '+fmt(l):'No previous log')+'</div>';
+function renderHome(){
+  let h='<h1>Gym Log</h1><div class="sub">Pick today’s session</div><div class="grid">';
+  SESSIONS.forEach(s=>{
+    const l=lastOf(s),dr=S.draft&&S.draft.session===s;
+    h+='<button class="big" data-start="'+s+'"><b>'+s+'</b><span class="mut">'+(dr?'In progress':l?'Last: '+l.date:'Not done yet')+'</span></button>';
+  });
+  $('#app').innerHTML=h+'</div>';
+}
+
+function renderSess(){
+  const d=S.draft;
+  let h='<div class="row"><button data-act="home">‹ Back</button></div><h1>'+esc(d.session)+'</h1><div class="sub">'+d.date+' · ▲ means you beat last time</div>';
+  if(!d.exercises.length)h+='<div class="card mut">No exercises yet. Add one below.</div>';
+  d.exercises.forEach((e,i)=>{
+    const r=refEx(d.session,e.name);
+    h+='<div class="card"><div class="ex-h"><b>'+esc(e.name)+'</b><span><button class="u" data-unit="'+i+'">'+e.unit+'</button><button class="x" data-del="'+i+'">Remove</button></span></div>';
+    h+='<div class="last">'+(r?'Last time: '+fmt(r):'First time')+'</div>';
     e.sets.forEach((s,j)=>{
-      h+='<div class="set"><span>'+(j+1)+'</span>'+
-      '<input type="number" inputmode="decimal" placeholder="kg" value="'+(s.w??'')+'" data-i="'+i+'" data-j="'+j+'" data-f="w">'+
+      h+='<div class="set"><span class="'+(isUp(i,j)?'up':'')+'">'+(isUp(i,j)?'▲':j+1)+'</span>'+
+      '<input type="number" inputmode="decimal" step="any" placeholder="'+e.unit+'" value="'+(s.w??'')+'" data-i="'+i+'" data-j="'+j+'" data-f="w">'+
       '<input type="number" inputmode="numeric" placeholder="reps" value="'+(s.r??'')+'" data-i="'+i+'" data-j="'+j+'" data-f="r">'+
       '<button class="x" data-ds="'+i+','+j+'">✕</button></div>';
     });
     h+='<button data-add="'+i+'">+ Add set</button></div>';
   });
-  h+='<div class="card"><div class="row"><input class="name" id="nx" list="nl" placeholder="Add exercise (e.g. Bench press)">'+
-  '<button class="pri" id="addx">Add</button></div><datalist id="nl">'+allNames().map(n=>'<option value="'+esc(n)+'">').join('')+'</datalist></div>';
+  h+='<div class="card"><div class="row"><input class="name" id="nx" list="nl" placeholder="Add exercise"><button class="pri" id="addx">Add</button></div>'+
+  '<datalist id="nl">'+allNames().map(n=>'<option value="'+esc(n)+'">').join('')+'</datalist></div>'+
+  '<button class="pri wide" data-act="finish">Finish workout</button><button class="x wide" data-act="discard">Discard workout</button>';
   $('#app').innerHTML=h;
 }
 
 function renderHist(){
-  const ds=Object.keys(workouts).filter(d=>workouts[d].exercises.length).sort().reverse();
-  let h='<h1>History</h1><div class="sub">'+ds.length+' workouts logged</div>';
-  if(!ds.length)h+='<div class="card mut">Nothing logged yet.</div>';
-  ds.forEach(d=>{
-    const w=workouts[d];
-    h+='<div class="card"><div class="hist" data-open="'+d+'"><b>'+d+'</b><span class="mut">'+w.exercises.length+' exercises ›</span></div>'+
-    w.exercises.map(e=>'<div class="mut">'+esc(e.name)+': '+fmt(e.sets)+'</div>').join('')+'</div>';
+  const L=[...S.log].map((l,i)=>({l,i})).reverse();
+  let h='<h1>History</h1><div class="sub">'+S.log.length+' workouts logged</div>';
+  if(!L.length)h+='<div class="card mut">Nothing logged yet.</div>';
+  L.forEach(({l,i})=>{
+    h+='<div class="card"><div class="hh"><b>'+esc(l.session)+' · '+l.date+'</b><button class="x" data-hdel="'+i+'">Delete</button></div>'+
+    l.exercises.map(e=>'<div class="mut">'+esc(e.name)+': '+fmt(e)+'</div>').join('')+'</div>';
   });
   h+='<div class="card"><b>Backup</b><div class="mut" style="margin:4px 0 8px">Data lives on this phone only.</div><div class="row"><button data-act="copy">Copy backup</button><button data-act="restore">Restore</button></div></div>';
   $('#app').innerHTML=h;
 }
 
 function render(){
-  $('#t1').className=view==='work'?'on':'';
+  $('#t1').className=view!=='hist'?'on':'';
   $('#t2').className=view==='hist'?'on':'';
-  view==='work'?renderWork():renderHist();
+  if(view==='hist')renderHist();else if(view==='sess'&&S.draft)renderSess();else{view='home';renderHome()}
+}
+
+function start(s){
+  if(S.draft&&S.draft.session!==s&&!confirm('You have an unfinished '+S.draft.session+' workout. Discard it and start '+s+'?'))return;
+  if(!S.draft||S.draft.session!==s)S.draft={session:s,date:todayStr(),exercises:clone(plan(s))};
+  save();view='sess';render();
 }
 
 document.addEventListener('click',ev=>{
-  const t=ev.target.closest('button,[data-open]');if(!t)return;
-  const w=wk(cur);
-  if(t.id==='t1'){view='work';cur=todayStr();render()}
+  const t=ev.target.closest('button');if(!t)return;
+  const d=S.draft;
+  if(t.id==='t1'){view=S.draft&&view==='sess'?'sess':'home';if(view==='hist')view='home';render()}
   else if(t.id==='t2'){view='hist';render()}
+  else if(t.dataset.start){start(t.dataset.start)}
+  else if(t.dataset.act==='home'){view='home';render()}
   else if(t.id==='addx'){
     const n=$('#nx').value.trim();if(!n)return;
-    const l=lastFor(n,cur);
-    w.exercises.push({name:n,sets:[l?{...l[l.length-1]}:{w:'',r:''}]});
-    persist(cur);render();
+    d.exercises.push({name:n,unit:unitFor(n),sets:[{w:'',r:''}]});save();render();
   }
   else if(t.dataset.add!==undefined){
-    const e=w.exercises[+t.dataset.add];const p=e.sets[e.sets.length-1];
-    e.sets.push(p?{...p}:{w:'',r:''});persist(cur);render();
+    const e=d.exercises[+t.dataset.add],p=e.sets[e.sets.length-1];
+    e.sets.push(p?{...p}:{w:'',r:''});save();render();
   }
   else if(t.dataset.ds!==undefined){
     const [i,j]=t.dataset.ds.split(',').map(Number);
-    w.exercises[i].sets.splice(j,1);
-    if(!w.exercises[i].sets.length)w.exercises.splice(i,1);
-    persist(cur);render();
+    d.exercises[i].sets.splice(j,1);
+    if(!d.exercises[i].sets.length)d.exercises.splice(i,1);
+    save();render();
   }
   else if(t.dataset.del!==undefined){
-    if(confirm('Remove this exercise?')){w.exercises.splice(+t.dataset.del,1);persist(cur);render()}
+    if(confirm('Remove this exercise?')){d.exercises.splice(+t.dataset.del,1);save();render()}
   }
-  else if(t.dataset.open){cur=t.dataset.open;view='work';render()}
+  else if(t.dataset.unit!==undefined){
+    const e=d.exercises[+t.dataset.unit];e.unit=UNITS[(UNITS.indexOf(e.unit)+1)%UNITS.length];save();render();
+  }
+  else if(t.dataset.act==='finish'){
+    const ex=d.exercises.map(e=>({...e,sets:e.sets.filter(s=>!(s.w===''&&s.r===''))})).filter(e=>e.sets.length);
+    if(!ex.length){alert('Nothing to save yet. Fill in at least one set.');return}
+    S.log.push({session:d.session,date:d.date,exercises:ex});S.draft=null;save();view='home';render();
+  }
+  else if(t.dataset.act==='discard'){
+    if(confirm('Discard this workout?')){S.draft=null;save();view='home';render()}
+  }
+  else if(t.dataset.hdel!==undefined){
+    if(confirm('Delete this workout from history?')){S.log.splice(+t.dataset.hdel,1);save();render()}
+  }
   else if(t.dataset.act==='copy'){
-    navigator.clipboard.writeText(JSON.stringify(workouts)).then(()=>alert('Backup copied. Paste it into Notes to keep it.'),()=>alert('Copy failed.'));
+    navigator.clipboard.writeText(JSON.stringify(S)).then(()=>alert('Backup copied. Paste it into Notes to keep it.'),()=>alert('Copy failed.'));
   }
   else if(t.dataset.act==='restore'){
     const p=prompt('Paste your backup here');if(!p)return;
-    try{const o=JSON.parse(p);Object.assign(workouts,o);saveLocal();render();alert('Restored.')}catch(e){alert('That backup is not valid.')}
+    try{const o=JSON.parse(p);if(!Array.isArray(o.log))throw 0;S=o;save();render();alert('Restored.')}catch(e){alert('That backup is not valid.')}
   }
 });
+
 document.addEventListener('input',ev=>{
   const t=ev.target;if(!t.dataset.f)return;
-  const s=wk(cur).exercises[+t.dataset.i].sets[+t.dataset.j];
-  s[t.dataset.f]=t.value===''?'':Number(t.value);
-  persist(cur);
+  const i=+t.dataset.i,j=+t.dataset.j;
+  S.draft.exercises[i].sets[j][t.dataset.f]=t.value===''?'':Number(t.value);
+  const m=t.closest('.set').firstChild,up=isUp(i,j);
+  m.className=up?'up':'';m.textContent=up?'▲':j+1;
+  save();
 });
 
-workouts=loadLocal();render();
-
+render();
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{})}
 </script>
 </body>
